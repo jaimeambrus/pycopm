@@ -399,7 +399,8 @@ def _resolve_include_paths(
     paths starting with a PATHS alias (``$``) are kept, and the text is unchanged when
     both folders are the same. Only the deck itself is rewritten, so relative INCLUDE
     paths inside included files, which Flow also resolves from the deck's folder, still
-    break.
+    break. Exits with an error when a rewritten path would contain an apostrophe, which
+    Flow cannot read in any quoting.
 
     Parameters
     ----------
@@ -417,24 +418,40 @@ def _resolve_include_paths(
     deck_lines = deck_text.splitlines(keepends=True)
     include_pending = False
     for index, deck_line in enumerate(deck_lines):
-        record = deck_line.split("--", maxsplit=1)[0].strip()
         if not include_pending:
+            record = deck_line.split("--", maxsplit=1)[0].strip()
             include_pending = record.upper() == "INCLUDE"
             continue
-        if not record:
-            continue
-        include_pending = False
-        match = re.match(r"(['\"])(.+?)\1|[^\s/]+", record)
+        # Matched before stripping comments, so a quoted path can contain "--"; an
+        # unquoted one runs up to the slash that ends the record.
+        match = re.match(
+            r"\s*(?:(['\"])(.+?)\1|((?:(?!--)[^\s'\"])+?)/?(?=\s|--|$))", deck_line
+        )
         if not match:
             continue
-        include_path = match.group(2) or match.group(0)
+        include_pending = False
+        include_path = match.group(2) or match.group(3)
         if include_path.startswith("$") or Path(include_path).is_absolute():
             continue
         new_path = os.path.relpath(
             Path(source_folder).resolve() / include_path, Path(target_folder).resolve()
         )
+        if "'" in new_path and new_path != include_path:
+            pycopm_error(
+                f"the INCLUDE path {cli_error_value(include_path)} would become "
+                f"{cli_error_value(new_path)} in the deck written to "
+                f"{cli_error_value(str(target_folder))}, but OPM Flow cannot read "
+                "paths with apostrophes. Use the deck's folder as the output folder, "
+                "or rename the folders with apostrophes."
+            )
         if new_path != include_path:
-            deck_lines[index] = deck_line.replace(match.group(0), f"'{new_path}'", 1)
+            if match.group(1):
+                start, end = match.span(2)
+            else:
+                # Quoted, as the folders the new path goes through may hold spaces.
+                start, end = match.span(3)
+                new_path = f"'{new_path}'"
+            deck_lines[index] = deck_line[:start] + new_path + deck_line[end:]
     return "".join(deck_lines)
 
 

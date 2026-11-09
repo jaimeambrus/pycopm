@@ -5,6 +5,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from pycopm.core.pycopm import main
 from pycopm.utils.generate_decks import _resolve_include_paths
 
@@ -63,3 +65,26 @@ def test_10_include_paths_kept(tmp_path):
     assert _resolve_include_paths(deck_text, tmp_path, tmp_path / "out") == (
         deck_text.replace("'C.INC'", "'../C.INC'")
     )
+
+
+def test_10_include_paths_layouts(tmp_path):
+    """Comment markers inside quotes and directories in unquoted paths must be kept."""
+
+    deck_text = "INCLUDE\n'A--B.INC' / -- Comment.\nINCLUDE\nsub/C.INC /\n"
+
+    assert _resolve_include_paths(deck_text, tmp_path, tmp_path / "out") == (
+        "INCLUDE\n'../A--B.INC' / -- Comment.\nINCLUDE\n'../sub/C.INC' /\n"
+    )
+
+
+def test_10_include_paths_apostrophe(tmp_path):
+    """A rewritten path with an apostrophe, which Flow cannot read, must stop pycopm."""
+
+    deck_text = "INCLUDE\n'A.INC' /\n"
+    deck_folder = tmp_path / "deck's"
+
+    assert _resolve_include_paths(deck_text, deck_folder, deck_folder / "out") == (
+        "INCLUDE\n'../A.INC' /\n"
+    )
+    with pytest.raises(SystemExit, match="apostrophes"):
+        _resolve_include_paths(deck_text, deck_folder, tmp_path / "out")
